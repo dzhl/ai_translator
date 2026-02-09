@@ -11,7 +11,9 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
-
+.repository.fossil
+_FOSSIL_
+_backups/
 # IntelliJ related
 *.iml
 *.ipr
