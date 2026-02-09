@@ -34,7 +34,7 @@ jobs:
             
           - target: macOS
             os: macos-latest
-            build_cmd: flutter build macos --release
+            build_cmd: flutter build macos --release --no-codesign
             zip_path: build/macos/Build/Products/Release
             asset_name: ai_translator-macos.zip
 
