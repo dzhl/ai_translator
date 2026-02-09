@@ -1,0 +1,104 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: Android
+            os: ubuntu-latest
+            build_cmd: flutter build apk --release
+            artifact_path: build/app/outputs/flutter-apk/app-release.apk
+            asset_name: ai_translator-android.apk
+          
+          - target: Windows
+            os: windows-latest
+            build_cmd: flutter build windows --release
+            zip_path: build/windows/runner/Release
+            asset_name: ai_translator-windows.zip
+            
+          - target: Linux
+            os: ubuntu-latest
+            build_cmd: flutter build linux --release
+            zip_path: build/linux/x64/release/bundle
+            asset_name: ai_translator-linux.tar.gz
+            
+          - target: macOS
+            os: macos-latest
+            build_cmd: flutter build macos --release
+            zip_path: build/macos/Build/Products/Release
+            asset_name: ai_translator-macos.zip
+
+          - target: Web
+            os: ubuntu-latest
+            build_cmd: flutter build web --release
+            zip_path: build/web
+            asset_name: ai_translator-web.zip
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.19.x'
+
+      - name: Install Linux Dependencies
+        if: matrix.target == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Application
+        run: ${{ matrix.build_cmd }}
+
+      # --- 打包/压缩步骤 ---
+      
+      - name: Prepare Android Artifact
+        if: matrix.target == 'Android'
+        run: mv ${{ matrix.artifact_path }} ${{ matrix.asset_name }}
+
+      - name: Compress Windows Artifact
+        if: matrix.target == 'Windows'
+        run: |
+          Compress-Archive -Path "${{ matrix.zip_path }}\*" -DestinationPath ${{ matrix.asset_name }}
+
+      - name: Compress Linux Artifact
+        if: matrix.target == 'Linux'
+        run: tar -czf ${{ matrix.asset_name }} -C ${{ matrix.zip_path }} .
+
+      - name: Compress macOS Artifact
+        if: matrix.target == 'macOS'
+        run: |
+          cd ${{ matrix.zip_path }}
+          zip -r $GITHUB_WORKSPACE/${{ matrix.asset_name }} ai_translator.app
+
+      - name: Compress Web Artifact
+        if: matrix.target == 'Web'
+        run: |
+          cd ${{ matrix.zip_path }}
+          zip -r $GITHUB_WORKSPACE/${{ matrix.asset_name }} .
+
+      # --- 上传 Release ---
+      
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ matrix.asset_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
