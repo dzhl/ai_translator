@@ -44,21 +44,32 @@ jobs:
             zip_path: build/web
             asset_name: ai_translator-web.zip
 
+          - target: iOS
+            os: macos-latest
+            build_cmd: flutter build ios --release --no-codesign
+            zip_path: build/ios/iphoneos
+            asset_name: ai_translator-ios.ipa
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          flutter-version: '3.19.x'
 
       - name: Install Linux Dependencies
         if: matrix.target == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
       - name: Install Dependencies
         run: flutter pub get
@@ -92,6 +103,13 @@ jobs:
         run: |
           cd ${{ matrix.zip_path }}
           zip -r $GITHUB_WORKSPACE/${{ matrix.asset_name }} .
+
+      - name: Compress iOS Artifact
+        if: matrix.target == 'iOS'
+        run: |
+          mkdir Payload
+          mv ${{ matrix.zip_path }}/Runner.app Payload
+          zip -r ${{ matrix.asset_name }} Payload
 
       # --- 上传 Release ---
       
