@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:sound_stream/sound_stream.dart';
 import '../models/app_config.dart';
 
@@ -10,6 +12,10 @@ class GeminiLiveService {
   WebSocketChannel? _channel;
   final PlayerStream _player = PlayerStream();
   bool _isConnected = false;
+  
+  // Callbacks
+  Function(String)? onError;
+  Function()? onDisconnected;
   
   // Stream controller to expose text updates to UI
   final _textController = StreamController<String>.broadcast();
@@ -22,15 +28,28 @@ class GeminiLiveService {
 
     try {
       // 1. Initialize Audio Player
-      // Live API typically returns 24kHz audio
       await _player.initialize(
         sampleRate: config.liveSampleRate, 
         showLogs: false,
       );
       
-      // 2. Connect WebSocket
+      // 2. Connect WebSocket with Proxy support
       final uri = Uri.parse('${config.liveWsUrl}?key=${config.apiKey}');
-      _channel = WebSocketChannel.connect(uri);
+      
+      final HttpClient client = HttpClient();
+      if (config.proxyUrl.isNotEmpty) {
+        client.findProxy = (uri) {
+          return "PROXY ${config.proxyUrl}";
+        };
+        client.badCertificateCallback = (cert, host, port) => true;
+      }
+
+      final WebSocket ws = await WebSocket.connect(
+        uri.toString(), 
+        customClient: client
+      ).timeout(const Duration(seconds: 10));
+
+      _channel = IOWebSocketChannel(ws);
       _isConnected = true;
       
       // Start player stream
@@ -41,16 +60,23 @@ class GeminiLiveService {
         (message) {
           if (message is String) {
             _handleMessage(message);
-          } else {
-            print("Received binary message (unexpected)");
           }
         },
         onError: (error) {
           print("WS Error: $error");
+          if (onError != null) onError!(error.toString());
           disconnect();
         },
         onDone: () {
-          print("WS Closed");
+          final code = _channel?.closeCode;
+          final reason = _channel?.closeReason;
+          print("WS Closed. Code: $code, Reason: $reason");
+          
+          if (_isConnected && code != null && code > 1001) {
+            if (onError != null) onError!("服务器断开 ($code): $reason");
+          } else if (onDisconnected != null) {
+            onDisconnected!();
+          }
           disconnect();
         },
       );
@@ -60,15 +86,25 @@ class GeminiLiveService {
 
     } catch (e) {
       print("Connection Error: $e");
-      disconnect();
+      _isConnected = false;
+      if (onError != null) onError!(e.toString());
       rethrow;
     }
   }
 
   void _sendSetupMessage() {
+    String model = config.modelName;
+    if (!model.startsWith('models/')) {
+      model = 'models/$model';
+    }
+    // Live API requires gemini-2.0
+    if (!model.contains('gemini-2.0')) {
+      model = 'models/gemini-2.0-flash-exp';
+    }
+
     final setup = {
       "setup": {
-        "model": "models/gemini-2.0-flash-exp", 
+        "model": model, 
         "generation_config": {
           "response_modalities": ["AUDIO"], 
           "speech_config": {

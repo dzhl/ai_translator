@@ -16,7 +16,7 @@ import '../services/gemini_rest_service.dart';
 import '../services/gemini_live_service.dart';
 import '../services/database_service.dart';
 
-enum AppState { idle, listening, processing, speaking, error }
+enum AppState { idle, connecting, listening, processing, speaking, error }
 
 class TranslationProvider with ChangeNotifier {
   AppState _state = AppState.idle;
@@ -42,6 +42,14 @@ class TranslationProvider with ChangeNotifier {
   StreamSubscription<Uint8List>? _audioStreamSubscription;
   StreamSubscription<String>? _liveTextSubscription;
   String? _currentRecordingPath;
+
+  // Free Hand State
+  Timer? _vadTimer;
+  DateTime? _lastSpeechTime;
+  bool _hasDetectedSpeech = false;
+  bool _isRotating = false; 
+  final double _speechThreshold = -35.0; // More sensitive
+  final int _silenceDurationMs = 1000;
 
   // Playback State
   int? _playingRecordId;
@@ -127,6 +135,23 @@ class TranslationProvider with ChangeNotifier {
     _llmService = LLMService(_config!);
     _geminiService = GeminiRestService(_config!);
     _liveService = GeminiLiveService(_config!);
+
+    _liveService!.onDisconnected = () {
+      if (_state == AppState.listening || _state == AppState.connecting) {
+        _setState(AppState.idle, msg: "实时对话已断开");
+        _cleanupLiveResources();
+      }
+    };
+    _liveService!.onError = (err) {
+      _setState(AppState.error, msg: "错误: $err");
+      _cleanupLiveResources();
+    };
+  }
+
+  Future<void> _cleanupLiveResources() async {
+    await _audioStreamSubscription?.cancel();
+    _audioStreamSubscription = null;
+    await _recorderService.stopStream();
   }
 
   Future<void> updateConfig(AppConfig newConfig) async {
@@ -166,7 +191,6 @@ class TranslationProvider with ChangeNotifier {
   Future<void> deleteSession(Session session) async {
     if (session.id == null) return;
     
-    // 1. Delete files
     final sessionRecords = await _dbService.getRecords(session.id!);
     for (var record in sessionRecords) {
       _deleteRecordFiles(record);
@@ -177,7 +201,6 @@ class TranslationProvider with ChangeNotifier {
       await sessionDir.delete(recursive: true);
     }
 
-    // 2. Delete DB
     await _dbService.deleteSession(session.id!);
     await _loadSessions();
 
@@ -234,14 +257,61 @@ class TranslationProvider with ChangeNotifier {
   // --- Translation Flow ---
 
   Future<void> startRecording(String langCode) async {
-    if (_state == AppState.processing) return;
+    if (_state == AppState.connecting || _state == AppState.listening) return;
+    if (_state == AppState.error) _setState(AppState.idle);
+
     if (_currentSession == null) await createSession("默认对话");
     
     await _ttsService.stop();
     await _audioPlayer.stop();
 
     if (_config?.translationMode == TranslationMode.live) {
-      // Live mode implementation (omitted for brevity, keeping existing structure)
+      _setState(AppState.connecting, msg: "正在连接...");
+      try {
+        if (!await _recorderService.hasPermission()) {
+          _setState(AppState.error, msg: "麦克风权限被拒绝");
+          return;
+        }
+
+        if (_config!.apiKey.isEmpty) {
+          _setState(AppState.error, msg: "请设置 API Key");
+          return;
+        }
+
+        await _liveService!.connect();
+        
+        _liveTextSubscription?.cancel();
+        _liveTextSubscription = _liveService!.textStream.listen((text) {
+          _statusMessage = "AI: $text"; 
+          notifyListeners();
+        });
+
+        final audioStream = await _recorderService.startStream();
+        _audioStreamSubscription = audioStream.listen((data) {
+          _liveService!.sendAudioChunk(data);
+        });
+
+        _setState(AppState.listening, msg: "实时对话中");
+      } catch (e) {
+        _setState(AppState.error, msg: "连接失败: $e");
+        await _cleanupLiveResources();
+        await _liveService?.disconnect();
+      }
+      return;
+    }
+
+    if (_config?.translationMode == TranslationMode.freeHand) {
+      _setState(AppState.listening, msg: "免手持模式: 聆听中...");
+      try {
+        if (!await _recorderService.hasPermission()) {
+          _setState(AppState.error, msg: "麦克风权限被拒绝");
+          return;
+        }
+        await _startNewRecordingFile();
+        _startVAD();
+      } catch (e) {
+        _setState(AppState.error, msg: "启动失败: $e");
+      }
       return;
     }
 
@@ -258,8 +328,86 @@ class TranslationProvider with ChangeNotifier {
     }
   }
 
+  Future<void> _startNewRecordingFile() async {
+    _currentRecordingPath = await _recorderService.getTempFilePath();
+    await _recorderService.startRecording(_currentRecordingPath!);
+    _hasDetectedSpeech = false;
+    _lastSpeechTime = null;
+  }
+
+  void _startVAD() {
+    _vadTimer?.cancel();
+    _vadTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+      if (_state != AppState.listening && _state != AppState.speaking) {
+        timer.cancel();
+        return;
+      }
+
+      if (_isRotating) return;
+
+      if (_isPlayingOutput) {
+        if (_hasDetectedSpeech) _lastSpeechTime = DateTime.now(); 
+        return;
+      }
+
+      final amplitude = await _recorderService.getAmplitude();
+      if (amplitude.current > _speechThreshold) {
+        _hasDetectedSpeech = true;
+        _lastSpeechTime = DateTime.now();
+      } else {
+        if (_hasDetectedSpeech && _lastSpeechTime != null) {
+          final silenceDuration = DateTime.now().difference(_lastSpeechTime!).inMilliseconds;
+          if (silenceDuration > _silenceDurationMs) {
+            print("VAD: Silence detected, rotating...");
+            _rotateRecording();
+          }
+        }
+      }
+    });
+  }
+
+  Future<void> _rotateRecording() async {
+    if (_isRotating) return;
+    _isRotating = true;
+
+    try {
+      final path = await _recorderService.stopRecording();
+      await _startNewRecordingFile();
+      _isRotating = false; 
+
+      if (path != null) {
+        final file = File(path);
+        if (await file.length() > 1000) { 
+          _processAudioTranslation(file, isBackground: true); 
+        }
+      }
+    } catch (e) {
+      print("Rotation error: $e");
+      _isRotating = false;
+    }
+  }
+
   Future<void> stopRecording() async {
-    if (_state != AppState.listening) return;
+    if (_state != AppState.listening && _state != AppState.connecting && _state != AppState.processing) return;
+
+    if (_config?.translationMode == TranslationMode.live) {
+      await _audioStreamSubscription?.cancel();
+      _audioStreamSubscription = null;
+      await _recorderService.stopStream();
+      await _liveService!.disconnect();
+      _setState(AppState.idle, msg: "实时对话结束");
+      return;
+    }
+
+    if (_config?.translationMode == TranslationMode.freeHand) {
+      _vadTimer?.cancel();
+      final path = await _recorderService.stopRecording();
+      _setState(AppState.idle, msg: "免手持模式结束");
+      if (path != null && _hasDetectedSpeech) {
+         _processAudioTranslation(File(path), isBackground: true);
+      }
+      return;
+    }
 
     try {
       final path = await _recorderService.stopRecording();
@@ -280,9 +428,9 @@ class TranslationProvider with ChangeNotifier {
     }
   }
 
-  Future<void> _processAudioTranslation(File audioFile) async {
+  Future<void> _processAudioTranslation(File audioFile, {bool isBackground = false}) async {
     if (_geminiService == null) return;
-    _setState(AppState.processing, msg: "正在思考...");
+    if (!isBackground) _setState(AppState.processing, msg: "正在思考...");
 
     try {
       final result = await _geminiService!.translateAudio(audioFile);
@@ -291,11 +439,10 @@ class TranslationProvider with ChangeNotifier {
       final sourceText = result['source_text'] ?? '[语音输入]';
       
       if (translatedText.isEmpty) {
-        _setState(AppState.error, msg: "无法翻译");
+        if (!isBackground) _setState(AppState.error, msg: "无法翻译");
         return;
       }
 
-      // Persistence
       final docDir = await getApplicationDocumentsDirectory();
       final sessionId = _currentSession!.id!;
       final sessionDir = Directory(p.join(docDir.path, 'sessions', sessionId.toString()));
@@ -305,29 +452,45 @@ class TranslationProvider with ChangeNotifier {
       final savedInputPath = p.join(sessionDir.path, 'input_$timestamp.m4a');
       await audioFile.copy(savedInputPath);
 
+      String? savedOutputPath;
+      String ttsLang = (detectedLang == 'zh' || detectedLang == 'Chinese') ? 'en-US' : 'zh-CN';
+      String outputFileName = 'output_$timestamp.wav';
+      
+      if (Platform.isWindows) {
+         savedOutputPath = p.join(sessionDir.path, outputFileName);
+         await _ttsService.synthesizeToFile(translatedText, savedOutputPath, ttsLang);
+      } else {
+         savedOutputPath = null; 
+      }
+      
+      if (savedOutputPath != null) {
+        final f = File(savedOutputPath);
+        await Future.delayed(const Duration(milliseconds: 500)); 
+        if (!await f.exists()) savedOutputPath = null;
+      }
+
       final newRecord = TranslationRecord(
         sessionId: sessionId,
         sourceText: sourceText, 
         translatedText: translatedText,
         sourceLang: detectedLang,
         inputAudioPath: savedInputPath,
+        outputAudioPath: savedOutputPath,
         createdAt: DateTime.now(),
       );
 
       await _dbService.insertRecord(newRecord);
       await loadSession(_currentSession!); 
 
-      // Auto TTS
       bool shouldSpeak = _config!.outputMode == OutputMode.both || _config!.outputMode == OutputMode.audio;
       if (shouldSpeak) {
-        _setState(AppState.speaking, msg: "正在朗读...");
-        String ttsLang = (detectedLang == 'zh' || detectedLang == 'Chinese') ? 'en-US' : 'zh-CN';
+        if (!isBackground) _setState(AppState.speaking, msg: "正在朗读...");
         await _ttsService.speak(translatedText, ttsLang);
       }
       
-      _setState(AppState.idle, msg: "就绪");
+      if (!isBackground) _setState(AppState.idle, msg: "就绪");
     } catch (e) {
-      _setState(AppState.error, msg: "错误: $e");
+      if (!isBackground) _setState(AppState.error, msg: "错误: $e");
     }
   }
 
@@ -338,10 +501,8 @@ class TranslationProvider with ChangeNotifier {
     if (_playingRecordId == record.id && _isPlayingInput) {
       await _audioPlayer.pause();
     } else {
-      // New or switching from output to input
       await _ttsService.stop();
-      _isPlayingOutput = false; // Manually update to ensure mutual exclusion
-      
+      _isPlayingOutput = false; 
       await _audioPlayer.stop();
       _playingRecordId = record.id;
       await _audioPlayer.play(DeviceFileSource(record.inputAudioPath!));
@@ -355,12 +516,9 @@ class TranslationProvider with ChangeNotifier {
       _playingRecordId = null;
       _isPlayingOutput = false;
     } else {
-      // New or switching from input to output
       await _audioPlayer.stop();
-      _isPlayingInput = false; // Manually update
-      
+      _isPlayingInput = false; 
       await _ttsService.stop();
-      
       _playingRecordId = record.id;
       String ttsLang = (record.sourceLang == 'zh' || record.sourceLang == 'Chinese') ? 'en-US' : 'zh-CN';
       await _ttsService.speak(record.translatedText, ttsLang);

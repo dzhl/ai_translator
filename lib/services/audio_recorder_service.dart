@@ -44,4 +44,8 @@ class AudioRecorderService {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     return '${tempDir.path}/recording_$timestamp.m4a';
   }
+
+  Future<Amplitude> getAmplitude() async {
+    return await _recorder.getAmplitude();
+  }
 }

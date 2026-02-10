@@ -2,7 +2,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 enum STTProvider { system, openai }
 enum TTSProvider { system, openai }
-enum TranslationMode { standard, live }
+enum TranslationMode { standard, live, freeHand }
 enum OutputMode { text, audio, both }
 
 class AppConfig {

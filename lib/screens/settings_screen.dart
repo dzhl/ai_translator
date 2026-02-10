@@ -152,8 +152,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               ButtonSegment(
                 value: TranslationMode.live, 
-                label: Text("Live (WebSocket)"),
+                label: Text("Live"),
                 icon: Icon(Icons.spatial_audio_off),
+              ),
+              ButtonSegment(
+                value: TranslationMode.freeHand, 
+                label: Text("Free Hand"),
+                icon: Icon(Icons.record_voice_over),
               ),
             ],
             selected: {_translationMode},

@@ -4,7 +4,7 @@
 
     <application
 
-        android:label="ai_translator"
+        android:label="VoiceTranslator"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

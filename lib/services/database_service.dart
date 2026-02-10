@@ -29,7 +29,7 @@ class DatabaseService {
     }
 
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'ai_translator.db');
+    final path = join(dbPath, 'VoiceTranslator.db');
 
     return await openDatabase(
       path,

@@ -1,4 +1,4 @@
-# ai_translator
+# VoiceTranslator
 
 A new Flutter project.
 
