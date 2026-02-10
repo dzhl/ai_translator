@@ -63,9 +63,10 @@ class GeminiRestService {
     final prompt = """
 You are a professional interpreter. 
 1. Listen to the audio. 
-2. Detect the language (Chinese or English). 
-3. Translate it to the other language. 
-4. Return ONLY a JSON object with this format: {"detected_lang": "zh", "translated_text": "..."}.
+2. Transcribe the original speech accurately.
+3. Detect the language (Chinese or English). 
+4. Translate it to the other language. 
+5. Return ONLY a JSON object with this format: {"source_text": "...", "detected_lang": "zh", "translated_text": "..."}.
 Do not include markdown formatting like ```json.
 """;
 

@@ -45,6 +45,10 @@ dependencies:
   audioplayers: ^6.5.1
   web_socket_channel: ^3.0.0
   sound_stream: ^0.4.2
+  sqflite: ^2.3.0
+  sqflite_common_ffi: ^2.3.0
+  sqlite3_flutter_libs: ^0.5.0
+  path: ^1.9.0
 
 
 dev_dependencies:

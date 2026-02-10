@@ -66,7 +66,7 @@ set(BUILD_BUNDLE_DIR "$<TARGET_FILE_DIR:${BINARY_NAME}>")
 # Make the "install" step default, as it's required to run.
 set(CMAKE_VS_INCLUDE_INSTALL_TO_DEFAULT_BUILD 1)
 # Force install to local build directory to avoid admin privilege issues
-set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/runner" CACHE PATH "Installation Directory" FORCE)
+set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/runner/$<CONFIG>" CACHE PATH "Installation Directory" FORCE)
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
