@@ -42,6 +42,7 @@ class TranslationProvider with ChangeNotifier {
   StreamSubscription<Uint8List>? _audioStreamSubscription;
   StreamSubscription<String>? _liveTextSubscription;
   String? _currentRecordingPath;
+  TranslationMode? _activeRecordingMode;
 
   // Free Hand State
   Timer? _vadTimer;
@@ -111,6 +112,7 @@ class TranslationProvider with ChangeNotifier {
   AppConfig? get config => _config;
   Set<int> get selectedRecordIds => _selectedRecordIds;
   bool get isMultiSelectMode => _selectedRecordIds.isNotEmpty;
+  TranslationMode? get activeRecordingMode => _activeRecordingMode;
   
   int? get playingRecordId => _playingRecordId;
   bool get isPlayingInput => _isPlayingInput;
@@ -256,7 +258,7 @@ class TranslationProvider with ChangeNotifier {
 
   // --- Translation Flow ---
 
-  Future<void> startRecording(String langCode) async {
+  Future<void> startRecording(String langCode, {TranslationMode? overrideMode}) async {
     if (_state == AppState.connecting || _state == AppState.listening) return;
     if (_state == AppState.error) _setState(AppState.idle);
 
@@ -265,7 +267,10 @@ class TranslationProvider with ChangeNotifier {
     await _ttsService.stop();
     await _audioPlayer.stop();
 
-    if (_config?.translationMode == TranslationMode.live) {
+    final mode = overrideMode ?? _config?.translationMode ?? TranslationMode.standard;
+    _activeRecordingMode = mode;
+
+    if (mode == TranslationMode.live) {
       _setState(AppState.connecting, msg: "正在连接...");
       try {
         if (!await _recorderService.hasPermission()) {
@@ -300,7 +305,7 @@ class TranslationProvider with ChangeNotifier {
       return;
     }
 
-    if (_config?.translationMode == TranslationMode.freeHand) {
+    if (mode == TranslationMode.freeHand) {
       _setState(AppState.listening, msg: "免手持模式: 聆听中...");
       try {
         if (!await _recorderService.hasPermission()) {
@@ -390,19 +395,23 @@ class TranslationProvider with ChangeNotifier {
   Future<void> stopRecording() async {
     if (_state != AppState.listening && _state != AppState.connecting && _state != AppState.processing) return;
 
-    if (_config?.translationMode == TranslationMode.live) {
+    final mode = _activeRecordingMode ?? _config?.translationMode ?? TranslationMode.standard;
+
+    if (mode == TranslationMode.live) {
       await _audioStreamSubscription?.cancel();
       _audioStreamSubscription = null;
       await _recorderService.stopStream();
       await _liveService!.disconnect();
       _setState(AppState.idle, msg: "实时对话结束");
+      _activeRecordingMode = null;
       return;
     }
 
-    if (_config?.translationMode == TranslationMode.freeHand) {
+    if (mode == TranslationMode.freeHand) {
       _vadTimer?.cancel();
       final path = await _recorderService.stopRecording();
       _setState(AppState.idle, msg: "免手持模式结束");
+      _activeRecordingMode = null;
       if (path != null && _hasDetectedSpeech) {
          _processAudioTranslation(File(path), isBackground: true);
       }
@@ -411,6 +420,7 @@ class TranslationProvider with ChangeNotifier {
 
     try {
       final path = await _recorderService.stopRecording();
+      _activeRecordingMode = null;
       if (path == null) {
         _setState(AppState.idle, msg: "录音失败");
         return;
@@ -425,6 +435,7 @@ class TranslationProvider with ChangeNotifier {
       await _processAudioTranslation(file);
     } catch (e) {
       _setState(AppState.error, msg: "停止录音错误: $e");
+      _activeRecordingMode = null;
     }
   }
 
@@ -438,6 +449,13 @@ class TranslationProvider with ChangeNotifier {
       final translatedText = result['translated_text'] ?? '';
       final sourceText = result['source_text'] ?? '[语音输入]';
       
+      // Filter out invalid or noise input
+      if (_isInvalidInput(sourceText)) {
+        print("Filtered out noise input: $sourceText");
+        if (!isBackground) _setState(AppState.idle, msg: "无效输入，已忽略");
+        return;
+      }
+
       if (translatedText.isEmpty) {
         if (!isBackground) _setState(AppState.error, msg: "无法翻译");
         return;
@@ -492,6 +510,29 @@ class TranslationProvider with ChangeNotifier {
     } catch (e) {
       if (!isBackground) _setState(AppState.error, msg: "错误: $e");
     }
+  }
+
+  bool _isInvalidInput(String text) {
+    String cleanText = text.trim().toLowerCase().replaceAll(RegExp(r'[\p{P}\p{S}]', unicode: true), '');
+    if (cleanText.isEmpty) return true;
+    
+    // Check if text is just punctuation
+    if (RegExp(r'^[\p{P}\p{S}]+$', unicode: true).hasMatch(text)) return true;
+
+    // Common noise words/hallucinations from STT/LLM on silent/noisy audio
+    final noisePhrases = [
+      '啊', '诶', '嗯', '哦', '呃', '哼', '哈', '唉', '哎', '切', '啧', '测试', '测试一下',
+      'okay', 'ok', 'ah', 'oh', 'uh', 'um', 'thanks', 'thank you', 'hello', 'bye'
+    ];
+
+    if (cleanText.length <= 3 || text.length <= 2) {
+      if (noisePhrases.contains(cleanText)) return true;
+    }
+
+    // If it's just a single very short word that is in noise list
+    if (noisePhrases.contains(cleanText)) return true;
+
+    return false;
   }
 
   // Playback

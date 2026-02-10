@@ -36,8 +36,8 @@ class AppConfig {
   factory AppConfig.defaultConfig() {
     return AppConfig(
       apiKey: '',
-      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/',
-      modelName: 'gemini-1.5-flash',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      modelName: 'gemini-1.5-flash-latest',
       sttProvider: STTProvider.system,
       ttsProvider: TTSProvider.system, // Fixed
       speechRate: 0.5,

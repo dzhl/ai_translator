@@ -20,10 +20,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _liveWsUrlController;
   late TextEditingController _proxyUrlController; // New Proxy Field
   
-  String _selectedModel = 'gemini-1.5-flash';
+  String _selectedModel = 'gemini-1.5-flash-latest';
   TranslationMode _translationMode = TranslationMode.standard;
   OutputMode _outputMode = OutputMode.both;
   bool _isTesting = false;
+
+  final Map<String, Map<String, String>> _modelPresets = {
+    'gemini-1.5-flash-latest': {
+      'name': 'Gemini 1.5 Flash',
+      'url': 'https://generativelanguage.googleapis.com/v1beta',
+    },
+    'gemini-2.0-flash-exp': {
+      'name': 'Gemini 2.0 Flash (New)',
+      'url': 'https://generativelanguage.googleapis.com/v1beta',
+    },
+    'gpt-4o-mini': {
+      'name': 'GPT-4o-mini',
+      'url': 'https://api.openai.com/v1',
+    },
+    'deepseek-chat': {
+      'name': 'DeepSeek-V3 (推荐)',
+      'url': 'https://api.deepseek.com',
+    },
+    'qwen-turbo': {
+      'name': 'Qwen-Turbo (通义千问)',
+      'url': 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    },
+    'custom': {
+      'name': '自定义模型',
+      'url': '',
+    },
+  };
 
   @override
   void initState() {
@@ -36,7 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _proxyUrlController = TextEditingController(text: config.proxyUrl);
     
     // Determine selected model preset
-    if (['gemini-1.5-flash', 'gemini-2.0-flash', 'gpt-4o-mini'].contains(config.modelName)) {
+    if (_modelPresets.containsKey(config.modelName)) {
       _selectedModel = config.modelName;
     } else {
       _selectedModel = 'custom';
@@ -169,7 +196,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
           
-          if (_translationMode == TranslationMode.standard) ...[
+          if (_translationMode == TranslationMode.standard || _translationMode == TranslationMode.freeHand) ...[
             const SizedBox(height: 20),
             _buildSectionHeader("Output Preference"),
             const SizedBox(height: 10),
@@ -191,22 +218,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           DropdownButtonFormField<String>(
             value: _selectedModel,
             decoration: const InputDecoration(labelText: "Model Preset"),
-            items: const [
-              DropdownMenuItem(value: 'gemini-1.5-flash', child: Text("Gemini 1.5 Flash")),
-              DropdownMenuItem(value: 'gemini-2.0-flash', child: Text("Gemini 2.0 Flash (New)")),
-              DropdownMenuItem(value: 'gpt-4o-mini', child: Text("OpenAI GPT-4o-mini")),
-              DropdownMenuItem(value: 'custom', child: Text("Custom Model")),
-            ],
+            items: _modelPresets.entries.map((e) => DropdownMenuItem(
+              value: e.key, 
+              child: Text(e.value['name']!)
+            )).toList(),
             onChanged: (value) {
               setState(() {
                 _selectedModel = value!;
                 if (value != 'custom') {
                   _modelNameController.text = value;
-                  if (value.startsWith('gemini')) {
-                     _baseUrlController.text = 'https://generativelanguage.googleapis.com/v1beta/';
-                  } else if (value == 'gpt-4o-mini') {
-                     _baseUrlController.text = 'https://api.openai.com/v1/';
-                  }
+                  _baseUrlController.text = _modelPresets[value]!['url']!;
                 }
               });
             },

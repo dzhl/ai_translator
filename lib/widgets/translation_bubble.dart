@@ -52,26 +52,38 @@ class TranslationBubble extends StatelessWidget {
             ),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.mic, size: 16, color: Colors.grey),
-                    const SizedBox(width: 4),
-                    Text(
-                      record.sourceText,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                    ),
-                  ],
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 2.0),
+                        child: Icon(Icons.mic, size: 16, color: Colors.grey),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          record.sourceText,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 if (record.inputAudioPath != null)
-                  IconButton(
-                    icon: Icon(
-                      isCurrentInputPlaying ? Icons.pause_circle_outline : Icons.play_circle_outline, 
-                      color: Colors.blue
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8.0),
+                    child: IconButton(
+                      icon: Icon(
+                        isCurrentInputPlaying ? Icons.pause_circle_outline : Icons.play_circle_outline, 
+                        color: Colors.blue
+                      ),
+                      onPressed: () => provider.playInputAudio(record),
+                      constraints: const BoxConstraints(),
+                      padding: EdgeInsets.zero,
                     ),
-                    onPressed: () => provider.playInputAudio(record),
-                    constraints: const BoxConstraints(),
-                    padding: EdgeInsets.zero,
                   ),
               ],
             ),

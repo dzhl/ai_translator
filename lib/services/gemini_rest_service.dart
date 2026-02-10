@@ -37,26 +37,22 @@ class GeminiRestService {
     List<int> audioBytes = await audioFile.readAsBytes();
     String base64Audio = base64Encode(audioBytes);
 
-    // Default to gemini-1.5-flash if not set or if it's an OpenAI model name
+    // Default to gemini-1.5-flash-latest if not set or if it's an OpenAI model name
     String model = config.modelName;
-    if (model.isEmpty || model.contains('gpt')) {
-      model = 'gemini-1.5-flash';
+    if (model.isEmpty || model.contains('gpt') || model.contains('deepseek') || model.contains('qwen')) {
+      model = 'gemini-1.5-flash-latest';
     }
 
     // Construct the URL
-    // Use the provided baseUrl from config
     String baseUrl = config.baseUrl;
-    if (baseUrl.endsWith('/')) baseUrl = baseUrl.substring(0, baseUrl.length - 1);
-
-    // FIX: If the user provided an OpenAI compatibility URL (ending in /openai), remove it.
-    // Native API calls should be to /v1beta/, NOT /v1beta/openai/
-    if (baseUrl.endsWith('/openai')) {
-      baseUrl = baseUrl.substring(0, baseUrl.length - 7); // Remove '/openai'
+    while (baseUrl.endsWith('/')) {
+      baseUrl = baseUrl.substring(0, baseUrl.length - 1);
     }
 
-    // If base URL includes 'openai' (compatibility endpoint), we might need to adjust or error out.
-    // But since this service is specifically for Native API, we assume the user has set a native-compatible base URL.
-    // Standard Google Native Base URL: https://generativelanguage.googleapis.com/v1beta/
+    // FIX: If the user provided an OpenAI compatibility URL (ending in /openai), remove it.
+    if (baseUrl.endsWith('/openai')) {
+      baseUrl = baseUrl.substring(0, baseUrl.length - 7);
+    }
     
     final url = Uri.parse('$baseUrl/models/$model:generateContent?key=${config.apiKey}');
 
